@@ -1,0 +1,6 @@
+LOCAL TEST ONLY — WITHOUT DOCKER OR TRAINING
+GET /health: 200 {"status": "ok", "model_loaded": true}
+POST /predict 0.5s synthetic WAV: 200
+POST /predict response: {"predicted_class": "up", "confidence": 0.2632, "probabilities": {"yes": 0.239, "no": 0.2562, "up": 0.2632, "down": 0.2415}, "latency_ms": 10.156}
+POST /predict invalid.txt: 400 {"detail": "Потрібний .wav файл."}
+NOTE: random, UNTRAINED checkpoint; no Accuracy measured here

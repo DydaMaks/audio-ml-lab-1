@@ -1,0 +1,8 @@
+data/
+saved_models/
+metrics/
+__pycache__/
+*.zip
+*.pdf
+*.docx
+.git/

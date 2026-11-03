@@ -1,0 +1,95 @@
+name: AudioCNN — базова лабораторна у Docker
+
+on:
+  push:
+    paths:
+      - '.github/workflows/audio-ml-lab.yml'
+      - 'model.py'
+      - 'prepare_data.py'
+      - 'train.py'
+      - 'app.py'
+      - 'test_api.py'
+      - 'tests/**'
+      - 'reporting/**'
+      - 'Dockerfile'
+      - 'docker-compose.yml'
+      - 'requirements.txt'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: audio-ml-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  train-and-test:
+    name: Навчання та тестування всередині Docker
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      COMPOSE_DOCKER_CLI_BUILD: '1'
+      DOCKER_BUILDKIT: '1'
+    steps:
+      - name: Отримати вихідний код
+        uses: actions/checkout@v4
+
+      - name: Перевірити середовище GitHub runner
+        run: |
+          uname -a
+          df -h .
+          docker --version
+          docker compose version
+          mkdir -p metrics saved_models data evidence
+
+      - name: Зібрати Docker-образ
+        run: |
+          set -o pipefail
+          docker compose build 2>&1 | tee metrics/ci-docker-build.log
+
+      - name: Автотести WAV та AudioCNN усередині Docker
+        run: |
+          set -o pipefail
+          docker compose run --rm unit 2>&1 | tee metrics/ci-unit.log
+
+      - name: Завантажити Speech Commands та навчити модель у Docker
+        run: |
+          set -o pipefail
+          docker compose run --rm train 2>&1 | tee metrics/ci-training.log
+
+      - name: Запустити REST API у Docker
+        run: |
+          docker compose up -d api
+          docker compose ps | tee metrics/ci-docker-ps.log
+          docker compose logs --no-color api > metrics/ci-server.log 2>&1
+
+      - name: Перевірити REST API, Accuracy і Latency у Docker
+        run: |
+          set -o pipefail
+          docker compose run --rm test 2>&1 | tee metrics/ci-api-tests.log
+          docker compose ps | tee -a metrics/ci-docker-ps.log
+          docker compose logs --no-color api > metrics/ci-server.log 2>&1
+
+      - name: Створити справжні зображення журналів та підсумковий звіт
+        if: success()
+        run: |
+          python -m pip install -q -r reporting/requirements-report.txt
+          python reporting/make_report.py
+
+      - name: Зберегти результати, скриншоти журналів та звіт
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: audio-cnn-lab-report-${{ github.run_number }}
+          path: |
+            metrics/
+            evidence/
+            reports/
+            saved_models/audio_cnn.pt
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Зупинити контейнери
+        if: always()
+        run: docker compose down --remove-orphans || true

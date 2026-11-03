@@ -1,0 +1,39 @@
+services:
+  train:
+    build: .
+    profiles: ["train"]
+    command: python train.py
+    volumes:
+      - ./data:/app/data
+      - ./saved_models:/app/saved_models
+      - ./metrics:/app/metrics
+  api:
+    build: .
+    command: uvicorn app:app --host 0.0.0.0 --port 8000
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./saved_models:/app/saved_models:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5).read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+  test:
+    build: .
+    profiles: ["test"]
+    command: python test_api.py
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      API_URL: http://api:8000
+    volumes:
+      - ./data:/app/data:ro
+      - ./metrics:/app/metrics
+
+  unit:
+    build: .
+    profiles: ["unit"]
+    command: python -m pytest -q tests/test_unit.py
