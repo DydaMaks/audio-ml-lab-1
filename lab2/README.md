@@ -1,7 +1,7 @@
 # Лабораторна робота №2 — MLOps / Docker
 Проєкт продовжує ЛР №1 і використовує Google mini Speech Commands (yes/no/up/down), Mel-спектрограму 64×101 та AudioCNN.
 
-- `Dockerfile`: двоетапна збірка trainer/runtime, модель включена у фінальний образ.
+- `Dockerfile`: двоетапна збірка trainer/runtime, модель включена у фінальний образ; повна тестова вибірка залишається поза runtime-образом.
 - `Dockerfile.single`: для порівняння — один важкий образ, що містить інструменти навчання й дані.
 - `src/api.py`: GET /health, GET /model-info, POST /predict.
 - `src/evaluate.py`: фактична Accuracy на незалежній тестовій вибірці.

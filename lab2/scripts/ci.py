@@ -148,7 +148,8 @@ def measure_docker(label,tag):
     name="kws_"+label
     run(["docker","rm","-f",name],check=False)
     start=time.monotonic()
-    run(["docker","run","-d","--name",name,"-p","8000:8000",tag],
+    extra_mount=["-v",str(ROOT/"artifacts/testset")+":/app/artifacts/testset:ro"] if label=="multi" else []
+    run(["docker","run","-d","--name",name,"-p","8000:8000",*extra_mount,tag],
         "docker-run-"+label+".log")
     try:
         first_successful_health()
@@ -195,8 +196,8 @@ def main():
     if hashes["single"]!=hashes["multi"]:
         raise RuntimeError("Single і multi містять різні ваги. Порівняння некоректне.")
     run(["docker","rm","-f","lab2_extract"],check=False)
-    run(["docker","create","--name","lab2_extract",tag_multi])
-    try: run(["docker","cp","lab2_extract:/app/artifacts",str(ROOT/"artifacts")])
+    run(["docker","create","--name","lab2_extract",tag_single])
+    try: run(["docker","cp","lab2_extract:/build/artifacts",str(ROOT/"artifacts")])
     finally: run(["docker","rm","-f","lab2_extract"])
     local=measure_local()
     single=measure_docker("single",tag_single)

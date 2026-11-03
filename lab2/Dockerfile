@@ -21,7 +21,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends libsndfile1 ca-
 COPY requirements-api.txt .
 RUN pip install --no-cache-dir -r requirements-api.txt
 COPY src/ ./src/
-COPY --from=trainer /build/artifacts ./artifacts
+COPY --from=trainer /build/artifacts/model.pt ./artifacts/model.pt
+COPY --from=trainer /build/artifacts/labels.json ./artifacts/labels.json
+COPY --from=trainer /build/artifacts/metrics.json ./artifacts/metrics.json
 ENV MODEL_PATH=/app/artifacts/model.pt PORT=8000 MODEL_VERSION=${MODEL_VERSION} PYTHONUNBUFFERED=1
 RUN useradd --create-home appuser && chown -R appuser:appuser /app
 USER appuser
