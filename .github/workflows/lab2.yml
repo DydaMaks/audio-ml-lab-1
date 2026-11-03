@@ -2,7 +2,7 @@ name: Lab2 MLOps Docker
 
 on:
   push:
-    branches: [main, lab2-mlops]
+    branches: [main, lab2-mlops, lab2-quality-gate-fail]
     paths:
       - 'lab2/**'
       - '.github/workflows/lab2.yml'
@@ -37,7 +37,7 @@ jobs:
         run: python -m pip install -q requests==2.32.3 python-docx==1.2.0 Pillow==11.3.0 reportlab==4.4.3
       - name: Build both Docker images and measure local vs Docker
         env:
-          ACC_THRESHOLD: ${{ github.event.inputs.acc_threshold || '60' }}
+          ACC_THRESHOLD: ${{ github.event.inputs.acc_threshold || '99' }}
         run: python lab2/scripts/ci.py
       - name: Generate authentic DOCX PDF and log snapshots
         run: python lab2/reporting/make_report.py
