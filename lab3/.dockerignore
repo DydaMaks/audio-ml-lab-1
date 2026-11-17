@@ -1,0 +1,10 @@
+.git
+.github
+.venv
+__pycache__/
+*.pyc
+data/
+results/
+*.ipynb
+.ipynb_checkpoints/
+# artifacts/ MUST be included to build runtime from a trained model

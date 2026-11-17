@@ -1,0 +1,182 @@
+name: Lab3 ML Pipeline
+on:
+  pull_request:
+    branches: [main]
+    paths: ['lab3/**', '.github/workflows/ml-pipeline.yml']
+  push:
+    branches: [main]
+    paths: ['lab3/**', '.github/workflows/ml-pipeline.yml']
+  workflow_dispatch:
+    inputs:
+      epochs:
+        description: 'Training epochs (1-12)'
+        required: true
+        default: '6'
+        type: string
+      push_image:
+        description: 'Publish image to GHCR'
+        type: boolean
+        default: false
+
+concurrency:
+  group: lab3-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: lab3
+    shell: bash
+
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Python syntax and security-adjacent static checks
+        run: |
+          python -m compileall -q src scripts
+          pip install -q ruff==0.9.10
+          ruff check src scripts --select E9,F63,F7,F82
+
+  train:
+    needs: lint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build trainer image
+        run: docker build --target trainer -t kws-trainer:ci .
+      - name: Train in Docker and capture logs
+        env:
+          GITHUB_EVENT: ${{ github.event_name }}
+          INPUT_EPOCHS: ${{ inputs.epochs }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          if [ "$GITHUB_EVENT" = pull_request ]; then
+            EPOCHS=5
+          elif [ "$GITHUB_EVENT" = workflow_dispatch ]; then
+            EPOCHS="${INPUT_EPOCHS:-6}"
+          else
+            EPOCHS=6
+          fi
+          if ! [[ "$EPOCHS" =~ ^[0-9]+$ ]] || (( EPOCHS < 1 || EPOCHS > 12 )); then
+            echo "Invalid epochs: $EPOCHS"; exit 1
+          fi
+          echo "Training epochs: $EPOCHS"
+          docker run --rm -e EPOCHS="$EPOCHS" -e MAX_PER_CLASS=500 -e MODEL_VERSION=1.0.0 \
+            -v "$PWD/artifacts:/artifacts" kws-trainer:ci 2>&1 | tee artifacts/train.log
+          test -s artifacts/model.pt
+          test -s artifacts/metrics.json
+          test -s artifacts/samples/expected.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: model-${{ github.run_id }}
+          path: lab3/artifacts/
+          retention-days: 14
+          if-no-files-found: error
+
+  verify:
+    needs: train
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: model-${{ github.run_id }}
+          path: lab3/artifacts/
+      - name: Build tested runtime image
+        run: docker build --target runtime -t kws-api:ci .
+      - name: Start API and verify readiness
+        run: |
+          set -euo pipefail
+          docker run -d --name kws -p 8000:8000 kws-api:ci
+          for i in {1..60}; do
+            if curl -fsS http://127.0.0.1:8000/health; then exit 0; fi
+            if [ "$(docker inspect -f '{{.State.Running}}' kws)" != true ]; then docker logs kws; exit 1; fi
+            sleep 1
+          done
+          docker logs kws
+          exit 1
+      - name: Install HTTP testing dependencies
+        run: python -m pip install -q requests==2.32.3
+      - name: Golden samples and HTTP error handling
+        run: |
+          mkdir -p metrics
+          python scripts/verify_model.py --expected artifacts/samples/expected.json --out metrics/verify.json
+          python - <<'PY'
+          import requests
+          r=requests.post('http://127.0.0.1:8000/predict',files={'file':('bad.wav',b'not wav','audio/wav')})
+          assert r.status_code==400,r.text
+          info=requests.get('http://127.0.0.1:8000/model-info').json()
+          assert info['model_version']=='1.0.0'
+          print('Invalid WAV: HTTP 400; /model-info: OK')
+          PY
+      - name: Accuracy quality gate
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          python - <<'PY'
+          import json,os
+          data=json.load(open('artifacts/metrics.json'))
+          threshold=55 if os.getenv('EVENT_NAME')=='pull_request' else 60
+          accuracy=data['accuracy_test_pct']
+          print(f'Accuracy: {accuracy}%, quality gate: {threshold}%')
+          if accuracy<threshold: raise SystemExit(1)
+          PY
+      - name: Latency benchmark (10 warmups + 100 requests)
+        run: python scripts/benchmark.py --wav artifacts/samples/yes.wav --n 100 --warmups 10 --out metrics/latency.json
+      - name: Generate report and job summary
+        if: always()
+        run: |
+          mkdir -p metrics
+          docker logs kws > metrics/service.log 2>&1 || true
+          python scripts/make_report.py --metrics metrics --artifacts artifacts --out metrics/report.md
+          cat metrics/report.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: report-${{ github.run_id }}
+          path: lab3/metrics/
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Stop API
+        if: always()
+        run: docker rm -f kws || true
+
+  build-push:
+    needs: verify
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.push_image)
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: model-${{ github.run_id }}
+          path: lab3/artifacts/
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and publish
+        env:
+          REPO: ${{ github.repository }}
+          GIT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          IMAGE="ghcr.io/${REPO,,}/kws-api"
+          docker build --target runtime -t "$IMAGE:sha-${GIT_SHA:0:12}" -t "$IMAGE:latest" .
+          docker push "$IMAGE:sha-${GIT_SHA:0:12}"
+          if [ "${GITHUB_REF}" = "refs/heads/main" ]; then docker push "$IMAGE:latest"; fi
+          echo "Published: $IMAGE:sha-${GIT_SHA:0:12}" >> "$GITHUB_STEP_SUMMARY"
