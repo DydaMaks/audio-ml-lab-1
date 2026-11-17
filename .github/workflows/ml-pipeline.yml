@@ -124,7 +124,7 @@ jobs:
           python - <<'PY'
           import json,os
           data=json.load(open('artifacts/metrics.json'))
-          threshold=55 if os.getenv('EVENT_NAME')=='pull_request' else 60
+          threshold=101 if os.getenv('EVENT_NAME')=='pull_request' else 60  # Intentional failure for ruleset demonstration
           accuracy=data['accuracy_test_pct']
           print(f'Accuracy: {accuracy}%, quality gate: {threshold}%')
           if accuracy<threshold: raise SystemExit(1)
